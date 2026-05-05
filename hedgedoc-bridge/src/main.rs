@@ -361,8 +361,83 @@ async fn get_cookie(url: &str) -> Result<String> {
 }
 
 #[derive(Default)]
+enum OTState {
+    #[default]
+    // No pending operartion that we have sent to the server.
+    Synchronized,
+    // There's one operation that we have sent to the server.
+    // We're still waiting for an acklowledgement.
+    AwaitingConfirm,
+}
+
+#[derive(Default)]
+struct TwoSidedOT {
+    state: OTState,
+    revision: u64, // Last revision acked by the server.
+    buffer: VecDeque<TextDelta>,
+}
+
+impl TwoSidedOT {
+    // The client makes an edit.
+    // Returns the delta to send to the server, if any
+    fn apply_client(&mut self, delta: TextDelta) -> Option<TextDelta> {
+        match self.state {
+            OTState::Synchronized => {
+                self.state = OTState::AwaitingConfirm;
+                Some(delta)
+            }
+            OTState::AwaitingConfirm => {
+                self.buffer.push_back(delta);
+                None
+            }
+        }
+    }
+
+    // The server sends us an edit.
+    // Returns the delta to apply to the document.
+    fn apply_server(&mut self, delta: TextDelta, revision: u64) -> TextDelta {
+        match self.state {
+            OTState::Synchronized => {
+                self.revision = revision;
+                delta
+            }
+            OTState::AwaitingConfirm => {
+                let buffer: Vec<_> = self.buffer.clone().into_iter().map(|o| o.into()).collect();
+                let (delta2, buffer2) =
+                    teamtype::ot::transform_through_operations(delta.into(), &buffer);
+                self.buffer = buffer2.into_iter().map(|o| o.into()).collect();
+                delta2.into()
+            }
+        }
+    }
+
+    // The server acknowledges an edit from us.
+    // Returns the delta to send to the server, if any.
+    fn server_ack(&mut self, revision: u64) -> Option<TextDelta> {
+        match self.state {
+            OTState::Synchronized => {
+                panic!("Nothing to ack");
+            }
+            OTState::AwaitingConfirm => {
+                if revision != self.revision + 1 {
+                    panic!("Unexpected ack");
+                }
+                self.revision = revision;
+                if let Some(delta) = self.buffer.pop_front() {
+                    Some(delta)
+                } else {
+                    // All caught up!
+                    self.state = OTState::Synchronized;
+                    None
+                }
+            }
+        }
+    }
+}
+
+#[derive(Default)]
 struct HedgedocBinding {
-    latest_revision: u64,
+    ot: TwoSidedOT,
     buffered_transmits_to_hedgedoc: VecDeque<(String, Payload)>,
     buffered_transmits_to_editor: VecDeque<ComponentMessage>,
 }
@@ -380,12 +455,6 @@ impl Pipe<(String, Payload), ComponentMessage, ComponentMessage, (String, Payloa
         match event.as_str() {
             "operation" => {
                 if let Payload::Text(data) = data {
-                    // Assume the edit is for the latest revision...
-                    let revision = data[1].as_u64().unwrap();
-                    if revision > self.latest_revision {
-                        self.latest_revision = revision;
-                    }
-
                     // TODO: Move this conversion to types.rs.
                     let mut delta = TextDelta::default();
                     for component in data[2].as_array().unwrap() {
@@ -407,9 +476,12 @@ impl Pipe<(String, Payload), ComponentMessage, ComponentMessage, (String, Payloa
                         }
                     }
 
+                    let revision = data[1].as_u64().unwrap();
+                    let delta_to_document = self.ot.apply_server(delta, revision);
+
                     let message = ComponentMessage::Edit {
                         file_path: RelativePath::new("file"),
-                        delta,
+                        delta: delta_to_document,
                     };
                     self.buffered_transmits_to_editor.push_back(message);
                 }
@@ -426,7 +498,7 @@ impl Pipe<(String, Payload), ComponentMessage, ComponentMessage, (String, Payloa
                         self.buffered_transmits_to_editor.push_back(open);
                     }
                     if let Some(n) = map.get("revision") {
-                        self.latest_revision = n.as_u64().unwrap();
+                        self.ot.revision = n.as_u64().unwrap();
                     }
                 }
             }
@@ -463,6 +535,16 @@ impl Pipe<(String, Payload), ComponentMessage, ComponentMessage, (String, Payloa
                     self.buffered_transmits_to_editor.push_back(message);
                 }
             }
+            "ack" => {
+                if let Payload::Text(data) = data {
+                    let revision = data[0].as_u64().unwrap();
+                    let delta_to_server_maybe = self.ot.server_ack(revision);
+
+                    if let Some(delta) = delta_to_server_maybe {
+                        self.send_to_hedgedoc(&delta);
+                    }
+                }
+            }
             _ => {
                 todo!();
             }
@@ -471,31 +553,11 @@ impl Pipe<(String, Payload), ComponentMessage, ComponentMessage, (String, Payloa
     fn handle_input_to_io(&mut self, message: ComponentMessage) {
         match message {
             ComponentMessage::Edit { delta, .. } => {
-                let mut text = Vec::new();
-                for op in delta.0 {
-                    match op {
-                        TextOp::Retain(n) => {
-                            text.push(json!(n));
-                        }
-                        TextOp::Insert(s) => {
-                            text.push(json!(s));
-                        }
-                        TextOp::Delete(n) => {
-                            text.push(json!(-(n as i64)));
-                        }
-                    }
-                }
-                self.buffered_transmits_to_hedgedoc.push_back((
-                    "operation".to_string(),
-                    vec![
-                        json!(self.latest_revision),
-                        serde_json::Value::Array(text),
-                        json!({"ranges": [{"anchor": 0, "head": 0}]}),
-                    ]
-                    .into(),
-                ));
+                let delta_to_server_maybe = self.ot.apply_client(delta);
 
-                self.latest_revision += 1;
+                if let Some(delta) = delta_to_server_maybe {
+                    self.send_to_hedgedoc(&delta);
+                }
 
                 // todo: process rev_deltas_for_editor?
             }
@@ -520,6 +582,39 @@ impl Pipe<(String, Payload), ComponentMessage, ComponentMessage, (String, Payloa
             }
         }
     }
+}
+
+impl HedgedocBinding {
+    fn send_to_hedgedoc(&mut self, delta: &TextDelta) {
+        let json_delta = delta_to_json(delta);
+        self.buffered_transmits_to_hedgedoc.push_back((
+            "operation".to_string(),
+            vec![
+                json!(self.ot.revision),
+                json_delta,
+                json!({"ranges": [{"anchor": 0, "head": 0}]}),
+            ]
+            .into(),
+        ));
+    }
+}
+
+fn delta_to_json(delta: &TextDelta) -> serde_json::Value {
+    let mut text = Vec::new();
+    for op in &delta.0 {
+        match op {
+            TextOp::Retain(n) => {
+                text.push(json!(n));
+            }
+            TextOp::Insert(s) => {
+                text.push(json!(s));
+            }
+            TextOp::Delete(n) => {
+                text.push(json!(-(*n as i64)));
+            }
+        }
+    }
+    serde_json::Value::Array(text)
 }
 
 #[derive(Default)]
@@ -804,12 +899,26 @@ async fn create_socket(hedgedoc_url: &str) -> (Client, mpsc::Receiver<(String, P
         .boxed()
     };
 
+    let callback_tx = Arc::clone(&tx);
+    let ack_callback = move |payload: Payload, _socket: Client| {
+        let callback_tx = Arc::clone(&callback_tx);
+        async move {
+            // Lock and send the message
+            let tx = callback_tx.lock().await;
+            if let Err(e) = tx.send(("ack".to_string(), payload)).await {
+                eprintln!("Failed to send message to channel: {e}");
+            }
+        }
+        .boxed()
+    };
+
     let socket = ClientBuilder::new(format!("{server}/socket.io/?noteId={note}"))
         .transport_type(TransportType::Polling)
         .opening_header("Cookie", cookie)
         .on("operation", operation_callback)
         .on("doc", doc_callback)
         .on("cursor activity", cursor_callback)
+        .on("ack", ack_callback)
         .connect()
         .await
         .expect("Connection failed");

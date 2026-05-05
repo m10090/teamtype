@@ -235,7 +235,7 @@ impl OTServer {
 ///     v  t1'  v
 ///     * ----> *
 ///
-fn transform_through_operations(
+pub fn transform_through_operations(
     mut their_op_seq: OperationSeq,
     my_operations: &[OperationSeq],
 ) -> (OperationSeq, Vec<OperationSeq>) {
