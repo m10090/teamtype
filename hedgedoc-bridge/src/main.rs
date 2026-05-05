@@ -1,15 +1,18 @@
 use anyhow::{Result, bail};
-use futures_util::FutureExt;
+use futures_util::{FutureExt, StreamExt, stream::FuturesUnordered};
 use reqwest::cookie::{CookieStore, Jar};
 use rust_socketio::{
     Payload, TransportType,
     asynchronous::{Client, ClientBuilder},
 };
 use serde_json::json;
-use std::collections::{HashMap, VecDeque};
-use std::io::Write;
-use std::marker::PhantomData;
 use std::sync::Arc;
+use std::{
+    collections::{HashMap, VecDeque},
+    future::pending,
+};
+use std::{future::Pending, io::Write};
+use std::{marker::PhantomData, pin::Pin};
 use teamtype::{
     editor_protocol::{
         EditorProtocolMessageFromEditor, EditorProtocolMessageToEditor, IncomingMessage,
@@ -1049,6 +1052,10 @@ impl HedgedocEnd {
     }
 }
 
+// async fn add_end(end: HedgedocEnd, future: impl Future<Output = (String, Payload)>) -> (&HedgedocEnd, Result<Data>) {
+//     (id, future.await)
+// }
+
 #[tokio::main]
 async fn main() {
     // let hedgedoc_url = std::env::args()
@@ -1125,11 +1132,40 @@ async fn main() {
             // socket.emit(event, data).await.expect("Failed to emit");
             continue;
         }
-        // if let Some(message) = pipeline.poll_transmit_to_io() {
-        //     print!("{message}");
-        //     std::io::stdout().flush().unwrap();
-        //     continue;
-        // }
+
+        if let Some(message) = editor_protocol.poll_transmit_to_io() {
+            print!("{message}");
+            std::io::stdout().flush().unwrap();
+            continue;
+        }
+
+        for end in ends.values_mut() {
+            if let Some(message) = end.pipe.poll_transmit_to_io() {
+                editor_protocol.handle_input_to_io(message);
+                continue;
+            }
+            if let Some((event, data)) = end.pipe.poll_transmit_from_io() {
+                end.socket.emit(event, data).await.unwrap();
+                continue;
+            }
+        }
+
+        let mut futures: FuturesUnordered<_> = Default::default();
+
+        // let fake: Pending<Option<_>> = pending();
+
+        for end in ends.values_mut() {
+            futures.push(Box::pin(end.rx.recv()));
+        }
+
+        async fn foo() -> Option<(String, Payload)> {
+            pending().await
+        }
+
+        // // futures.push(Box::pin(foo()));
+        // let fake = pending::<Option<(String, Payload)>>();
+        // futures.push(Box::pin(fake));
+
         tokio::select! {
             // socket_message_maybe = rx.recv() => {
             //     if let Some(socket_message) = socket_message_maybe {
@@ -1138,7 +1174,19 @@ async fn main() {
             //         running = false;
             //     }
             // }
+
+             msg = futures.select_next_some() => {
+                 // Explicitly drop.
+                 drop(futures);
+
+                 dbg!(&msg);
+
+                 // TODO: Don't assume there's only one end.
+                 let end = ends.values_mut().next().unwrap();
+                 end.pipe.handle_input_to_io(msg.unwrap());
+             }
             result = stdin.read(&mut buf) => {
+                drop(futures);
                 match result {
                     Ok(0) => {
                         // eof
