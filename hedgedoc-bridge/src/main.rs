@@ -1091,7 +1091,7 @@ async fn main() {
 
     // Then, start the full pipeline.
     let mut running = true;
-    while running {
+    'outer: while running {
         if let Some(message) = editor_protocol.poll_transmit_from_io() {
             match message {
                 EditorProtocolMessageFromEditor::Open { uri, content } => {
@@ -1142,11 +1142,11 @@ async fn main() {
         for end in ends.values_mut() {
             if let Some(message) = end.pipe.poll_transmit_to_io() {
                 editor_protocol.handle_input_to_io(message);
-                continue;
+                continue 'outer;
             }
             if let Some((event, data)) = end.pipe.poll_transmit_from_io() {
                 end.socket.emit(event, data).await.unwrap();
-                continue;
+                continue 'outer;
             }
         }
 
@@ -1175,15 +1175,18 @@ async fn main() {
             //     }
             // }
 
-             msg = futures.select_next_some() => {
+             msg = futures.next(), if !futures.is_empty() => {
                  // Explicitly drop.
                  drop(futures);
 
                  dbg!(&msg);
 
+                 if let Some(Some(msg)) = msg {
+
                  // TODO: Don't assume there's only one end.
                  let end = ends.values_mut().next().unwrap();
-                 end.pipe.handle_input_to_io(msg.unwrap());
+                 end.pipe.handle_input_to_io(msg);
+                 }
              }
             result = stdin.read(&mut buf) => {
                 drop(futures);
