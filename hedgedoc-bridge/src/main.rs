@@ -628,8 +628,8 @@ impl Pipe<(String, Payload), ComponentMessage, ComponentMessage, (String, Payloa
             } => {
                 let range = ranges[0].clone();
                 let message = json!({
-                    "line": range.start.line as u64,
-                    "ch": range.start.character as u64,
+                    "line": range.end.line as u64,
+                    "ch": range.end.character as u64,
                     "sticky": "after",
                     "xRel": 3.25, // ???
                 });
@@ -637,6 +637,19 @@ impl Pipe<(String, Payload), ComponentMessage, ComponentMessage, (String, Payloa
                 //65:42["cursor focus",{"line":3,"ch":7,"sticky":"after","xRel":3.25}]68:42["cursor activity",{"line":3,"ch":7,"sticky":"after","xRel":3.25}]
                 self.buffered_transmits_to_hedgedoc
                     .push_back(("cursor activity".to_string(), vec![message].into()));
+
+                // Send selections.
+                let ranges: Vec<_> = ranges
+                    .iter()
+                    .map(|range| {
+                        let start_offset = range.start.try_to_offset(&self.ot.content).unwrap();
+                        let end_offset = range.end.try_to_offset(&self.ot.content).unwrap();
+                        json!({"anchor": start_offset, "head": end_offset})
+                    })
+                    .collect();
+
+                self.buffered_transmits_to_hedgedoc
+                    .push_back(("selection".to_string(), json!({"ranges": ranges}).into()));
             }
             _ => {
                 // pass
