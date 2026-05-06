@@ -1,10 +1,11 @@
 use anyhow::{Result, bail};
+use async_trait::async_trait;
+use futures_util::future::BoxFuture;
 use futures_util::{FutureExt, StreamExt, stream::FuturesUnordered};
+use regex::Regex;
 use reqwest::cookie::{CookieStore, Jar};
-use rust_socketio::{
-    Payload, TransportType,
-    asynchronous::{Client, ClientBuilder},
-};
+use rust_socketio as socketio4;
+use rust_socketio_v2 as socketio2;
 use serde_json::json;
 use std::collections::{HashMap, VecDeque};
 use std::io::Write;
@@ -338,12 +339,14 @@ impl Pipe<String, String, String, String> for LinesCodec {
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
-async fn get_cookie(url: &str) -> Result<String> {
+async fn get_cookie_and_version(url: &str) -> Result<(String, String)> {
     let cookie_jar = Arc::new(Jar::default());
 
     let client = reqwest::Client::builder()
         .cookie_store(true)
         .cookie_provider(cookie_jar.clone())
+        // Without a user agent, some servers return a HTTP 503.
+        .user_agent("teamtype-hedgedoc")
         .build()?;
 
     let response = client.get(url).send().await?;
@@ -352,12 +355,22 @@ async fn get_cookie(url: &str) -> Result<String> {
         bail!(format!("Failed to fetch URL: {}", response.status()));
     }
 
-    if let Some(cookies) = cookie_jar.cookies(&url.parse()?) {
-        // Return the cookies as a string
-        Ok(cookies.to_str()?.to_string())
-    } else {
+    let Some(cookies) = cookie_jar.cookies(&url.parse()?) else {
         bail!("No cookies found.")
-    }
+    };
+
+    let cookies = cookies.to_str()?.to_string();
+
+    let text = response.text().await?;
+
+    let re = Regex::new("https://github.com/hedgedoc/hedgedoc/tree/([^\"]*)").unwrap();
+    let Some(captures) = re.captures(&text) else {
+        bail!("Hedgedoc version not found");
+    };
+
+    let version = captures[1].to_string();
+
+    Ok((cookies, version))
 }
 
 #[derive(Default)]
@@ -477,136 +490,125 @@ impl Pipe<(String, Payload), ComponentMessage, ComponentMessage, (String, Payloa
     fn handle_input_from_io(&mut self, (event, data): (String, Payload)) {
         match event.as_str() {
             "operation" => {
-                if let Payload::Text(data) = data {
-                    // TODO: Move this conversion to types.rs.
-                    let mut delta = TextDelta::default();
-                    for component in data[2].as_array().unwrap() {
-                        match component {
-                            serde_json::Value::Number(n) => {
-                                let n = n.as_i64().unwrap();
-                                if n > 0 {
-                                    delta.retain(n as usize);
-                                } else {
-                                    delta.delete((-n) as usize);
-                                }
-                            }
-                            serde_json::Value::String(s) => {
-                                delta.insert(s);
-                            }
-                            _ => {
-                                panic!("unexpected component");
+                // TODO: Move this conversion to types.rs.
+                let mut delta = TextDelta::default();
+                for component in data[2].as_array().unwrap() {
+                    match component {
+                        serde_json::Value::Number(n) => {
+                            let n = n.as_i64().unwrap();
+                            if n > 0 {
+                                delta.retain(n as usize);
+                            } else {
+                                delta.delete((-n) as usize);
                             }
                         }
+                        serde_json::Value::String(s) => {
+                            delta.insert(s);
+                        }
+                        _ => {
+                            panic!("unexpected component");
+                        }
                     }
-
-                    let revision = data[1].as_u64().unwrap();
-                    let delta_to_document = self.ot.apply_server(delta, revision);
-
-                    let message = ComponentMessage::Edit {
-                        file_path: RelativePath::new("file"),
-                        delta: delta_to_document,
-                    };
-                    self.buffered_transmits_to_editor.push_back(message);
                 }
+
+                let revision = data[1].as_u64().unwrap();
+                let delta_to_document = self.ot.apply_server(delta, revision);
+
+                let message = ComponentMessage::Edit {
+                    file_path: RelativePath::new("file"),
+                    delta: delta_to_document,
+                };
+                self.buffered_transmits_to_editor.push_back(message);
             }
             "doc" => {
-                if let Payload::Text(data) = data {
-                    let map = data[0].as_object().unwrap();
-                    if let Some(str) = map.get("str") {
-                        let content = str.as_str().unwrap();
-                        let open = ComponentMessage::Open {
-                            file_path: RelativePath::new("file"),
-                            content: content.to_string(),
-                        };
-                        self.buffered_transmits_to_editor.push_back(open);
-                        self.ot.content = content.to_string();
-                    }
-                    if let Some(n) = map.get("revision") {
-                        self.ot.revision = n.as_u64().unwrap();
-                    }
+                let map = data[0].as_object().unwrap();
+                if let Some(str) = map.get("str") {
+                    let content = str.as_str().unwrap();
+                    let open = ComponentMessage::Open {
+                        file_path: RelativePath::new("file"),
+                        content: content.to_string(),
+                    };
+                    self.buffered_transmits_to_editor.push_back(open);
+                    self.ot.content = content.to_string();
+                }
+                if let Some(n) = map.get("revision") {
+                    self.ot.revision = n.as_u64().unwrap();
                 }
             }
             "cursor activity" => {
-                if let Payload::Text(data) = data {
-                    let map = data[0].as_object().unwrap();
+                let map = data[0].as_object().unwrap();
 
-                    let name = map.get("name").unwrap().as_str().unwrap();
-                    let id = map.get("id").unwrap().as_str().unwrap();
+                let name = map.get("name").unwrap().as_str().unwrap();
+                let id = map.get("id").unwrap().as_str().unwrap();
 
-                    // parse the format
-                    let cursor = map.get("cursor").unwrap().as_object().unwrap();
-                    let line = cursor.get("line").unwrap().as_u64().unwrap() as usize;
-                    let ch = cursor.get("ch").unwrap().as_u64().unwrap() as usize;
-                    let range = Range {
-                        start: Position {
-                            line,
-                            character: ch,
-                        },
-                        end: Position {
-                            line,
-                            character: ch,
-                        },
-                    };
+                // parse the format
+                let cursor = map.get("cursor").unwrap().as_object().unwrap();
+                let line = cursor.get("line").unwrap().as_u64().unwrap() as usize;
+                let ch = cursor.get("ch").unwrap().as_u64().unwrap() as usize;
+                let range = Range {
+                    start: Position {
+                        line,
+                        character: ch,
+                    },
+                    end: Position {
+                        line,
+                        character: ch,
+                    },
+                };
 
-                    let message = ComponentMessage::Cursor {
-                        cursor_id: id.to_string(),
-                        cursor_state: CursorState {
-                            name: Some(name.to_string()),
-                            file_path: RelativePath::new("file"),
-                            ranges: vec![range],
-                        },
-                    };
-                    self.buffered_transmits_to_editor.push_back(message);
-                }
+                let message = ComponentMessage::Cursor {
+                    cursor_id: id.to_string(),
+                    cursor_state: CursorState {
+                        name: Some(name.to_string()),
+                        file_path: RelativePath::new("file"),
+                        ranges: vec![range],
+                    },
+                };
+                self.buffered_transmits_to_editor.push_back(message);
             }
             "selection" => {
-                if let Payload::Text(data) = data {
-                    let id = data[0].as_str().unwrap().to_string() + "-selection";
+                let id = data[0].as_str().unwrap().to_string() + "-selection";
 
-                    let ranges = if let Some(map) = data[1].as_object() {
-                        let ranges = map.get("ranges").unwrap().as_array().unwrap();
+                let ranges = if let Some(map) = data[1].as_object() {
+                    let ranges = map.get("ranges").unwrap().as_array().unwrap();
 
-                        ranges
-                            .iter()
-                            .map(|range| {
-                                let anchor =
-                                    range.get("anchor").unwrap().as_u64().unwrap() as usize;
-                                let head = range.get("head").unwrap().as_u64().unwrap() as usize;
+                    ranges
+                        .iter()
+                        .map(|range| {
+                            let anchor = range.get("anchor").unwrap().as_u64().unwrap() as usize;
+                            let head = range.get("head").unwrap().as_u64().unwrap() as usize;
 
-                                let anchor_row_col =
-                                    Position::try_from_offset(anchor, &self.ot.content).unwrap();
-                                let head_row_col =
-                                    Position::try_from_offset(head, &self.ot.content).unwrap();
+                            let anchor_row_col =
+                                Position::try_from_offset(anchor, &self.ot.content).unwrap();
+                            let head_row_col =
+                                Position::try_from_offset(head, &self.ot.content).unwrap();
 
-                                Range {
-                                    start: anchor_row_col,
-                                    end: head_row_col,
-                                }
-                            })
-                            .collect()
-                    } else {
-                        vec![]
-                    };
+                            Range {
+                                start: anchor_row_col,
+                                end: head_row_col,
+                            }
+                        })
+                        .collect()
+                } else {
+                    vec![]
+                };
 
-                    let message = ComponentMessage::Cursor {
-                        cursor_id: id,
-                        cursor_state: CursorState {
-                            name: Some("".to_string()),
-                            file_path: RelativePath::new("file"),
-                            ranges,
-                        },
-                    };
-                    self.buffered_transmits_to_editor.push_back(message);
-                }
+                let message = ComponentMessage::Cursor {
+                    cursor_id: id,
+                    cursor_state: CursorState {
+                        name: Some("".to_string()),
+                        file_path: RelativePath::new("file"),
+                        ranges,
+                    },
+                };
+                self.buffered_transmits_to_editor.push_back(message);
             }
             "ack" => {
-                if let Payload::Text(data) = data {
-                    let revision = data[0].as_u64().unwrap();
-                    let delta_to_server_maybe = self.ot.server_ack(revision);
+                let revision = data[0].as_u64().unwrap();
+                let delta_to_server_maybe = self.ot.server_ack(revision);
 
-                    if let Some(delta) = delta_to_server_maybe {
-                        self.send_to_hedgedoc(&delta);
-                    }
+                if let Some(delta) = delta_to_server_maybe {
+                    self.send_to_hedgedoc(&delta);
                 }
             }
             _ => {
@@ -639,7 +641,7 @@ impl Pipe<(String, Payload), ComponentMessage, ComponentMessage, (String, Payloa
                 //https://md.ha.si/socket.io/?noteId=test&EIO=3&transport=polling&t=PJDp9Jn&sid=8LNDtCS1OEzstE25ADiw
                 //65:42["cursor focus",{"line":3,"ch":7,"sticky":"after","xRel":3.25}]68:42["cursor activity",{"line":3,"ch":7,"sticky":"after","xRel":3.25}]
                 self.buffered_transmits_to_hedgedoc
-                    .push_back(("cursor activity".to_string(), vec![message].into()));
+                    .push_back(("cursor activity".to_string(), vec![message]));
 
                 // Send selections.
                 let ranges: Vec<_> = ranges
@@ -652,7 +654,7 @@ impl Pipe<(String, Payload), ComponentMessage, ComponentMessage, (String, Payloa
                     .collect();
 
                 self.buffered_transmits_to_hedgedoc
-                    .push_back(("selection".to_string(), json!({"ranges": ranges}).into()));
+                    .push_back(("selection".to_string(), vec![json!({"ranges": ranges})]));
             }
             _ => {
                 // pass
@@ -670,8 +672,7 @@ impl HedgedocBinding {
                 json!(self.ot.revision),
                 json_delta,
                 json!({"ranges": [{"anchor": 0, "head": 0}]}),
-            ]
-            .into(),
+            ],
         ));
     }
 }
@@ -928,7 +929,68 @@ impl Pipe<ComponentMessage, ComponentMessage, ComponentMessage, ComponentMessage
     }
 }
 
-async fn create_socket(hedgedoc_url: &str) -> (Client, mpsc::Receiver<(String, Payload)>) {
+type Payload = Vec<serde_json::Value>;
+
+#[async_trait]
+trait Socket {
+    async fn emit(&mut self, event: &str, data: Payload) -> Result<()>;
+}
+
+#[async_trait]
+impl Socket for socketio4::asynchronous::Client {
+    async fn emit(&mut self, event: &str, data: Payload) -> Result<()> {
+        Ok(socketio4::asynchronous::Client::emit(&self, event, data).await?)
+    }
+}
+
+#[async_trait]
+impl Socket for socketio2::asynchronous::Client {
+    async fn emit(&mut self, event: &str, data: Payload) -> Result<()> {
+        Ok(socketio2::asynchronous::Client::emit(&self, event, data).await?)
+    }
+}
+
+fn make_callback_v4(
+    tx: Arc<tokio::sync::Mutex<tokio::sync::mpsc::Sender<(String, Payload)>>>,
+    operation: &'static str,
+) -> impl FnMut(socketio4::Payload, socketio4::asynchronous::Client) -> BoxFuture<'static, ()> {
+    let operation = operation.to_string();
+
+    move |payload, _client| {
+        let tx = Arc::clone(&tx);
+        let operation = operation.clone();
+
+        async move {
+            if let socketio4::Payload::Text(payload) = payload {
+                let tx = tx.lock().await;
+                let _ = tx.send((operation, payload)).await;
+            }
+        }
+        .boxed()
+    }
+}
+
+fn make_callback_v2(
+    tx: Arc<tokio::sync::Mutex<tokio::sync::mpsc::Sender<(String, Payload)>>>,
+    operation: &'static str,
+) -> impl FnMut(socketio2::Payload, socketio2::asynchronous::Client) -> BoxFuture<'static, ()> {
+    let operation = operation.to_string();
+
+    move |payload, _client| {
+        let tx = Arc::clone(&tx);
+        let operation = operation.clone();
+
+        async move {
+            if let socketio2::Payload::Text(payload) = payload {
+                let tx = tx.lock().await;
+                let _ = tx.send((operation, payload)).await;
+            }
+        }
+        .boxed()
+    }
+}
+
+async fn create_socket(hedgedoc_url: &str) -> (Box<dyn Socket>, mpsc::Receiver<(String, Payload)>) {
     let server = hedgedoc_url
         .split('/')
         .take(3)
@@ -936,94 +998,63 @@ async fn create_socket(hedgedoc_url: &str) -> (Client, mpsc::Receiver<(String, P
         .join("/");
     let note = hedgedoc_url.split('/').nth(3).unwrap();
 
-    let cookie = get_cookie(&server).await.expect("Failed to get cookie");
+    let (cookie, version) = get_cookie_and_version(&server)
+        .await
+        .expect("Failed to get cookie");
 
     let (tx, rx) = mpsc::channel(32);
-
     let tx = Arc::new(Mutex::new(tx));
 
-    let callback_tx = Arc::clone(&tx);
-    let operation_callback = move |payload: Payload, _socket: Client| {
-        let callback_tx = Arc::clone(&callback_tx);
-        async move {
-            // Lock and send the message
-            let tx = callback_tx.lock().await;
-            if let Err(e) = tx.send(("operation".to_string(), payload)).await {
-                eprintln!("Failed to send message to channel: {e}");
-            }
-        }
-        .boxed()
-    };
+    // HedgeDoc updated their Socket.IO version from 2 to 4 in 2025.
+    // The first version to use version 4 is HedgeDoc 1.10.4.
+    let uses_socketio_v4 =
+        version_compare::compare_to(version, "1.10.4", version_compare::Cmp::Ge).unwrap();
 
-    let callback_tx = Arc::clone(&tx);
-    let doc_callback = move |payload: Payload, _socket: Client| {
-        let callback_tx = Arc::clone(&callback_tx);
-        async move {
-            // Lock and send the message
-            let tx = callback_tx.lock().await;
-            if let Err(e) = tx.send(("doc".to_string(), payload)).await {
-                eprintln!("Failed to send message to channel: {e}");
-            }
-        }
-        .boxed()
+    let socket: Box<dyn Socket> = if uses_socketio_v4 {
+        Box::new(
+            socketio4::asynchronous::ClientBuilder::new(format!(
+                "{server}/socket.io/?noteId={note}"
+            ))
+            .transport_type(rust_socketio::TransportType::Polling)
+            .opening_header("Cookie", cookie)
+            .on("operation", make_callback_v4(Arc::clone(&tx), "operation"))
+            .on("doc", make_callback_v4(Arc::clone(&tx), "doc"))
+            .on(
+                "cursor activity",
+                make_callback_v4(Arc::clone(&tx), "cursor activity"),
+            )
+            .on("selection", make_callback_v4(Arc::clone(&tx), "selection"))
+            .on("ack", make_callback_v4(Arc::clone(&tx), "ack"))
+            .connect()
+            .await
+            .expect("Connection failed"),
+        )
+    } else {
+        Box::new(
+            socketio2::asynchronous::ClientBuilder::new(format!(
+                "{server}/socket.io/?noteId={note}"
+            ))
+            .transport_type(rust_socketio_v2::TransportType::Polling)
+            .opening_header("Cookie", cookie)
+            .on("operation", make_callback_v2(Arc::clone(&tx), "operation"))
+            .on("doc", make_callback_v2(Arc::clone(&tx), "doc"))
+            .on(
+                "cursor activity",
+                make_callback_v2(Arc::clone(&tx), "cursor activity"),
+            )
+            .on("selection", make_callback_v2(Arc::clone(&tx), "selection"))
+            .on("ack", make_callback_v2(Arc::clone(&tx), "ack"))
+            .connect()
+            .await
+            .expect("Connection failed"),
+        )
     };
-
-    let callback_tx = Arc::clone(&tx);
-    let cursor_callback = move |payload: Payload, _socket: Client| {
-        let callback_tx = Arc::clone(&callback_tx);
-        async move {
-            // Lock and send the message
-            let tx = callback_tx.lock().await;
-            if let Err(e) = tx.send(("cursor activity".to_string(), payload)).await {
-                eprintln!("Failed to send message to channel: {e}");
-            }
-        }
-        .boxed()
-    };
-
-    let callback_tx = Arc::clone(&tx);
-    let selection_callback = move |payload: Payload, _socket: Client| {
-        let callback_tx = Arc::clone(&callback_tx);
-        async move {
-            // Lock and send the message
-            let tx = callback_tx.lock().await;
-            if let Err(e) = tx.send(("selection".to_string(), payload)).await {
-                eprintln!("Failed to send message to channel: {e}");
-            }
-        }
-        .boxed()
-    };
-
-    let callback_tx = Arc::clone(&tx);
-    let ack_callback = move |payload: Payload, _socket: Client| {
-        let callback_tx = Arc::clone(&callback_tx);
-        async move {
-            // Lock and send the message
-            let tx = callback_tx.lock().await;
-            if let Err(e) = tx.send(("ack".to_string(), payload)).await {
-                eprintln!("Failed to send message to channel: {e}");
-            }
-        }
-        .boxed()
-    };
-
-    let socket = ClientBuilder::new(format!("{server}/socket.io/?noteId={note}"))
-        .transport_type(TransportType::Polling)
-        .opening_header("Cookie", cookie)
-        .on("operation", operation_callback)
-        .on("doc", doc_callback)
-        .on("cursor activity", cursor_callback)
-        .on("selection", selection_callback)
-        .on("ack", ack_callback)
-        .connect()
-        .await
-        .expect("Connection failed");
 
     (socket, rx)
 }
 
 struct HedgedocEnd {
-    socket: Client,
+    socket: Box<dyn Socket>,
     rx: mpsc::Receiver<(String, Payload)>,
     pipe: Box<
         dyn Pipe<
@@ -1128,7 +1159,7 @@ async fn main() {
                 continue 'outer;
             }
             if let Some((event, data)) = end.pipe.poll_transmit_from_io() {
-                end.socket.emit(event, data).await.unwrap();
+                end.socket.emit(&event, data).await.unwrap();
                 continue 'outer;
             }
         }

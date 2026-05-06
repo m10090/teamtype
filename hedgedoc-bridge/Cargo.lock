@@ -431,7 +431,7 @@ version = "0.30.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "16e2cdb6d5ed835199484bb92bb8b3edd526effe995c61732580439c1a67e2e9"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "http",
  "log",
  "url",
@@ -500,6 +500,12 @@ name = "base32"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "022dfe9eb35f19ebbcb51e0b40a5ab759f46ad60cadf7297e0bd085afb50e076"
+
+[[package]]
+name = "base64"
+version = "0.21.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d297deb1925b89f2ccc13d7635fa0714f12c87adce1c75356b39ca9b7178567"
 
 [[package]]
 name = "base64"
@@ -1993,7 +1999,7 @@ version = "0.1.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "96547c2556ec9d12fb1578c4eaf448b04993e7fb79cbaad930a656880a6bdfa0"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "bytes",
  "futures-channel",
  "futures-util",
@@ -2690,7 +2696,7 @@ dependencies = [
  "async-std",
  "async-trait",
  "async-tungstenite",
- "base64",
+ "base64 0.22.1",
  "bytecodec",
  "crypto_secretbox",
  "derive_more 1.0.0",
@@ -3275,7 +3281,7 @@ version = "3.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d30c53c26bc5b31a98cd02d20f25a7c8567146caf63ed593a9d87b2775291be"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "serde_core",
 ]
 
@@ -3534,7 +3540,7 @@ version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d6db66007eac4a0ec8331d0d20c734bd64f6445d64bbaf0d0a27fea7a054e36"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "bytes",
  "derive_more 1.0.0",
  "futures-lite",
@@ -3903,7 +3909,7 @@ version = "0.12.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eddd3ca559203180a307f12d114c268abf583f59b03cb906fd0b3ff8646c1147"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "bytes",
  "cookie",
  "cookie_store",
@@ -4015,12 +4021,36 @@ dependencies = [
 [[package]]
 name = "rust_engineio"
 version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3d3572ceba6c5d79eecedf3be93640ca9512fa4100dff6a70f96c514adf4f1f"
+dependencies = [
+ "adler32",
+ "async-stream",
+ "async-trait",
+ "base64 0.21.7",
+ "bytes",
+ "futures-util",
+ "http",
+ "native-tls",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-tungstenite",
+ "tungstenite 0.21.0",
+ "url",
+]
+
+[[package]]
+name = "rust_engineio"
+version = "0.6.0"
 source = "git+https://github.com/blinry/rust-socketio?branch=socketio-v2#5c7f6d41643ae07c2b61f83023007cdb1dcaa544"
 dependencies = [
  "adler32",
  "async-stream",
  "async-trait",
- "base64",
+ "base64 0.22.1",
  "bytes",
  "futures-util",
  "http",
@@ -4038,18 +4068,41 @@ dependencies = [
 [[package]]
 name = "rust_socketio"
 version = "0.6.0"
-source = "git+https://github.com/blinry/rust-socketio?branch=socketio-v2#5c7f6d41643ae07c2b61f83023007cdb1dcaa544"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a6a8672db895d567b3c0b8a4c0d3e98113ebb32badf6ce66004e743e5ee1e1e"
 dependencies = [
  "adler32",
  "async-stream",
  "backoff",
- "base64",
+ "base64 0.21.7",
  "bytes",
  "futures-util",
  "log",
  "native-tls",
  "rand 0.8.6",
- "rust_engineio",
+ "rust_engineio 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "url",
+]
+
+[[package]]
+name = "rust_socketio"
+version = "0.6.0"
+source = "git+https://github.com/blinry/rust-socketio?branch=socketio-v2#5c7f6d41643ae07c2b61f83023007cdb1dcaa544"
+dependencies = [
+ "adler32",
+ "async-stream",
+ "backoff",
+ "base64 0.22.1",
+ "bytes",
+ "futures-util",
+ "log",
+ "native-tls",
+ "rand 0.8.6",
+ "rust_engineio 0.6.0 (git+https://github.com/blinry/rust-socketio?branch=socketio-v2)",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -4549,7 +4602,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fb921f10397d5669e1af6455e9e2d367bf1f9cebcd6b1dd1dc50e19f6a9ac2ac"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "bounded-integer",
  "byteorder",
  "crc",
@@ -4737,14 +4790,18 @@ name = "teamtype-hedgedoc"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "dissimilar",
  "futures-util",
+ "regex",
  "reqwest",
- "rust_socketio",
+ "rust_socketio 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rust_socketio 0.6.0 (git+https://github.com/blinry/rust-socketio?branch=socketio-v2)",
  "serde",
  "serde_json",
  "teamtype",
  "tokio",
+ "version-compare",
 ]
 
 [[package]]
@@ -4969,7 +5026,7 @@ version = "0.11.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9fcaf159b4e7a376b05b5bfd77bfd38f3324f5fce751b4213bfc7eaa47affb4e"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "bytes",
  "futures-core",
  "futures-sink",
@@ -5318,6 +5375,12 @@ name = "vcpkg"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
+
+[[package]]
+name = "version-compare"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "03c2856837ef78f57382f06b2b8563a2f512f7185d732608fd9176cb3b8edf0e"
 
 [[package]]
 name = "version_check"
