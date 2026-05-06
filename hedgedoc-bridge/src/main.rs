@@ -410,7 +410,10 @@ impl TwoSidedOT {
         self.revision = revision;
 
         match self.state {
-            OTState::Synchronized => delta,
+            OTState::Synchronized => {
+                self.content = OTServer::force_apply(&self.content, delta.clone().into());
+                delta
+            }
             OTState::AwaitingConfirm => {
                 let ops = vec![self.outstanding.clone().into(), self.buffer.clone().into()];
 
