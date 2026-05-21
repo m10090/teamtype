@@ -171,7 +171,6 @@ local function find_or_create_client(config_name, root_dir)
                     vim.api.nvim_err_writeln(
                         "Connection to Teamtype daemon lost. Probably it crashed or was stopped. Please restart the daemon, then Neovim."
                     )
-                    -- TODO: Enable writing here again, so that user can make backup of file?
                 end)
             else
                 print(
@@ -186,11 +185,18 @@ local function find_or_create_client(config_name, root_dir)
                 local to_remove = {}
                 for i, c in ipairs(clients) do
                     if c == client then
-                        for _, buf_nr in ipairs(c.buffers) do
-                            vim.bo[buf_nr].modifiable = false
+                        to_remove[i] = true
+
+                        -- If the daemon crashed, prevent modifications to the buffers to save users from
+                        -- accidental data losss.
+                        if code == 0 then
+                            for _, buf_nr in ipairs(c.buffers) do
+                                vim.bo[buf_nr].modifiable = false
+
+                                -- TODO: Enable writing here again, so that user can make backup of file?
+                            end
                         end
                     end
-                    to_remove[i] = true
                 end
 
                 -- Remove from clients list.
