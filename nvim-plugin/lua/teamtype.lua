@@ -140,6 +140,35 @@ local function track_edits(client, filename, uri, initial_lines)
     end)
 end
 
+local function attempt_reconnect(client)
+    -- while true do
+    -- TODO: ideally faster? (with exponential backoff?)
+    vim.defer_fn(function()
+        print("Try to reconnect...")
+        for _, buf_nr in ipairs(client.buffers) do
+            vim.bo[buf_nr].modifiable = true
+        end
+
+        local dispatchers = {
+            notification = function(m, p)
+                process_operation_for_editor(client, m, p)
+            end,
+            on_error = function(code, ...)
+                print("Teamtype connection error: ", code, vim.inspect({ ... }))
+            end,
+            on_exit = function(code, _)
+                -- TODO: Remove client from clients table.
+                attempt_reconnect(client)
+            end,
+        }
+        local the_connection = connection.connect(configurations[client.name].cfg.cmd, client.root_dir, dispatchers)
+        client.connection = the_connection
+        table.insert(clients, client)
+    end, 5000)
+    -- end
+end
+
+-- TODO: next step - make this function more flexible?
 local function find_or_create_client(config_name, root_dir)
     -- We re-use connections for configs with the same name and root_dir.
     for _, client in ipairs(clients) do
@@ -180,12 +209,21 @@ local function find_or_create_client(config_name, root_dir)
                 )
             end
 
+            -- React to disconnect.
             vim.schedule(function()
-                -- React to disconnect.
                 local to_remove = {}
                 for i, c in ipairs(clients) do
                     if c == client then
                         to_remove[i] = true
+                    end
+                end
+
+                -- Remove from clients list.
+                -- TODO: Probably one for loop going backwards over the clients would be enough.
+                for i = #clients, 1, -1 do
+                    if to_remove[i] then
+                        local c = clients[i]
+                        table.remove(clients, i)
 
                         -- If the daemon crashed, prevent modifications to the buffers to save users from
                         -- accidental data losss.
@@ -193,16 +231,11 @@ local function find_or_create_client(config_name, root_dir)
                             for _, buf_nr in ipairs(c.buffers) do
                                 vim.bo[buf_nr].modifiable = false
 
+                                attempt_reconnect(c)
+
                                 -- TODO: Enable writing here again, so that user can make backup of file?
                             end
                         end
-                    end
-                end
-
-                -- Remove from clients list.
-                for i = #clients, 1, -1 do
-                    if to_remove[i] then
-                        table.remove(clients, i)
                     end
                 end
             end)
