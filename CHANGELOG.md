@@ -7,6 +7,8 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
 # 0.9.2 (unreleased)
 
+Add status widget to the Neovim plugin with basic information to be used in statuslines.
+
 Fix issue blocking directories with deep nesting (or very long winded names) from being shared.
 
 Handle POSIX specific process signalling without assuming everybody is running a Unix platform.
