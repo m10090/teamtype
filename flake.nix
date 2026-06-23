@@ -34,6 +34,7 @@
           buildDeps = with pkgs; [ ];
           devDeps = with pkgs; [
             cargo-deny
+            git
             just
             luaPackages.luacheck
             prettier
