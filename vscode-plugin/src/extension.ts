@@ -8,7 +8,7 @@ import * as cp from "child_process"
 import * as rpc from "vscode-jsonrpc/node"
 import * as path from "path"
 import * as fs from "fs"
-var Mutex = require("async-mutex").Mutex
+import { Mutex } from "async-mutex";
 
 import {setCursor, getCursorInfo, drawCursors} from "./cursor"
 
@@ -27,52 +27,9 @@ function findMarkerDirectory(dir: string, marker: string) {
     return findMarkerDirectory(parentDir, marker)
 }
 
-interface Position {
-    line: number
-    character: number
-}
-
-interface Range {
-    start: Position
-    end: Position
-}
-
-interface Delta {
-    range: Range
-    replacement: string
-}
-
-interface Edit {
-    uri: string
-    revision: number
-    delta: Delta[]
-}
-
-interface Cursor {
-    uri: string
-    ranges: Range[]
-}
-
-interface CursorFromDaemon {
-    userid: string
-    name?: string
-    uri: string
-    ranges: Range[]
-}
-
 class Revision {
     daemon = 0
     editor = 0
-}
-
-interface Configuration {
-    cmd: string[]
-    rootMarkers: string[]
-}
-
-interface DocumentOTState {
-    revision: Revision
-    content: string[]
 }
 
 class Client {

@@ -17,11 +17,6 @@ const selectionDecorationType = vscode.window.createTextEditorDecorationType({
     },
 })
 
-interface RemoteCursor {
-    name: string
-    uri: vscode.Uri
-    selection: vscode.DecorationOptions
-}
 
 let cursors: Map<string, RemoteCursor[]> = new Map()
 
