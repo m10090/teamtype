@@ -10,7 +10,7 @@ import * as path from "path"
 import * as fs from "fs"
 import { Mutex } from "async-mutex";
 
-import {setCursor, getCursorInfo, drawCursors} from "./cursor"
+import {setCursor, getCursorInfo, drawCursors, followCursor, syncFollowCursor} from "./cursor"
 
 function findMarkerDirectory(dir: string, marker: string) {
     if (fs.existsSync(path.join(dir, marker))) {
@@ -261,6 +261,7 @@ async function processCursorFromDaemon(cursor: CursorFromDaemon) {
                 })
         }
         setCursor(cursor.userid, cursor.name || "anonymous", vscode.Uri.parse(uri), selections)
+        await syncFollowCursor()
     } catch {
         // If we couldn't convert teamtypeRangeToVSCodeRange, it's probably because
         // we received the cursor message before integrating the edits, typing at the end of a line.
@@ -477,6 +478,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.onDidChangeTextEditorSelection(processSelection),
         vscode.window.onDidChangeActiveTextEditor(drawCursors),
         vscode.commands.registerCommand("teamtype.showCursors", showCursorNotification),
+        vscode.commands.registerCommand("teamtype.followCursor", followCursor)
     )
 
     openCurrentTextDocuments()
@@ -507,3 +509,4 @@ function getLines(document: vscode.TextDocument): string[] {
     }
     return lines
 }
+
