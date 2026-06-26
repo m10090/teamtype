@@ -1,0 +1,48 @@
+# SPDX-FileCopyrightText: NONE
+#
+# SPDX-License-Identifier: CC0-1.0
+
+name: Neovim plugin
+
+on:
+  push:
+    branches:
+      - "main"
+    paths:
+      - "vscode-plugin/**"
+      - ".github/workflows/vscode-plugin.yml"
+  pull_request:
+    paths:
+      - "vscode-plugin/**"
+      - ".github/workflows/nvim-plugin.yml"
+
+jobs:
+  check_lua:
+    name: Check Lua formatting and linting
+    runs-on: ubuntu-latest
+    default:
+      run:
+        working-directory: ./vscode-plugin
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v1
+        with:
+          node-version: 20
+
+      - name: Install Node.js dependencies
+        run: npm ci
+
+      - name: Check poject build
+        run: npm run build
+
+      - name: Run tests
+        run: npm run test
+
+      - name: Linting check
+        run: npm run lint
+
+      - name: Check formatting
+        run: npx prettier --check ./**/*.ts # prettier should be in devDependencies in package.json
+
