@@ -305,7 +305,6 @@ async function processCursorFromDaemon(cursor: CursorFromDaemon) {
                 })
         }
         setCursor(cursor.userid, cursor.name || "anonymous", vscode.Uri.parse(uri), selections)
-        await syncFollowCursor()
     } catch {
         // If we couldn't convert teamtypeRangeToVSCodeRange, it's probably because
         // we received the cursor message before integrating the edits, typing at the end of a line.

@@ -53,6 +53,9 @@ export function setCursor(userid: string, name: string, uri: vscode.Uri, selecti
     for (let editor of editors) {
         drawCursors(editor);
     }
+    if (userid === followedUserId){
+        syncFollowCursor();
+    }
 }
 
 export function getCursorInfo(): string {
