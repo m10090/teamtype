@@ -7,6 +7,7 @@
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
+    nixpkgs-for-eslint.url = "github:nixos/nixpkgs/80d901ec0377e19ac3f7bb8c035201e2e098cc97";
     flake-parts.url = "github:hercules-ci/flake-parts";
     rust-overlay.url = "github:oxalica/rust-overlay";
   };
@@ -30,11 +31,19 @@
           ...
         }:
         let
-          runtimeDeps = with pkgs; [ ];
-          buildDeps = with pkgs; [ ];
+          runtimeDeps = with pkgs; [
+            libgit2
+          ];
+          buildDeps = with pkgs; [
+            pkg-config
+          ];
+          pkgsForEslint = import inputs.nixpkgs-for-eslint { inherit system; };
           devDeps = with pkgs; [
             cargo-deny
             git
+            git-cliff
+            github-cli
+            jq
             just
             luaPackages.luacheck
             prettier
@@ -42,19 +51,20 @@
             rustup
             stylua
             typos
+            pkgsForEslint.eslint # TODO: Remove pkgsForEslint once we upgrade to eslint 10.
           ];
 
           workspaceToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
           cargoToml = builtins.fromTOML (builtins.readFile ./crates/teamtype/Cargo.toml);
 
-          resolve =
+          resolveManifestValue =
             key:
             if builtins.isAttrs cargoToml.package.${key} && cargoToml.package.${key} ? workspace then
               workspaceToml.workspace.package.${key}
             else
               cargoToml.package.${key};
 
-          msrv = resolve "rust-version";
+          msrv = resolveManifestValue "rust-version";
 
           rustPlatform = pkgs.makeRustPlatform {
             cargo = pkgs.rust-bin.stable.latest.minimal;
@@ -64,13 +74,16 @@
           rustPackage =
             features:
             rustPlatform.buildRustPackage {
-              name = resolve "name";
-              version = resolve "version";
+              name = resolveManifestValue "name";
+              version = resolveManifestValue "version";
               src = ./.;
               cargoLock.lockFile = ./Cargo.lock;
               buildFeatures = features;
               buildInputs = runtimeDeps;
               nativeBuildInputs = buildDeps;
+              env = {
+                LIBGIT2_NO_VENDOR = 1;
+              };
               doCheck = false;
             };
 

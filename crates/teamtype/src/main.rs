@@ -14,6 +14,7 @@ use std::{env, panic};
 use anyhow::bail;
 use anyhow::{Context, Result};
 use clap::{CommandFactory as _, FromArgMatches as _};
+use docstr::docstr;
 use microxdg::XdgApp;
 use teamtype::jsonrpc_forwarder::{JSONRPCForwarder, UnixJSONRPCForwarder};
 use teamtype::{
@@ -51,7 +52,8 @@ async fn main() -> Result<()> {
         exit(1);
     }));
 
-    let arg_matches = Cli::command().get_matches();
+    let version = option_env!("TEAMTYPE_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"));
+    let arg_matches = Cli::command().version(version).get_matches();
     let cli = match Cli::from_arg_matches(&arg_matches) {
         Ok(cli) => cli,
         Err(e) => e.exit(),
@@ -98,9 +100,12 @@ async fn run_daemon(app_config: AppConfig, init_doc: bool) -> Result<Daemon> {
     config::ensure_teamtype_is_ignored(&app_config.base_dir)?;
 
     if app_config.sync_vcs && config::has_local_user_config(&app_config.base_dir).is_ok_and(|v| v) {
-        warn!(
-            "You have a local user configuration in your .git/config. In --sync-vcs mode, this file will also be synchronized between peers. If your version \"wins\", all peers will have the same Git identity. As a workaround, you could use `git commit --author`."
-        );
+        warn!(docstr!(
+            /// You have a local user configuration in your .git/config.
+            /// In --sync-vcs mode, this file will also be synchronized between peers.
+            /// If your version "wins", all peers will have the same Git identity.
+            /// As a workaround, you could use `git commit --author`.
+        ));
     }
 
     debug!("Starting Teamtype on {}.", app_config.base_dir.display());
@@ -108,7 +113,7 @@ async fn run_daemon(app_config: AppConfig, init_doc: bool) -> Result<Daemon> {
     // Setup a new daemon from the derived config. Immediately join the handle because that's what
     // actually starts the local socket and any configured network connections. Return the result
     // so the calling context can determine when to terminate.
-    Daemon::new(app_config, init_doc, persist, &prompt_bool)
+    Daemon::new(app_config, init_doc, persist)
         .await
         .context("Failed to launch the daemon")
 }

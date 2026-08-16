@@ -19,8 +19,9 @@ use automerge::{
     Patch,
     sync::{Message as AutomergeSyncMessage, State as SyncState},
 };
+use docstr::docstr;
 use futures::SinkExt;
-use rand::Rng;
+use rand::RngExt;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::{
     sync::{broadcast, mpsc, oneshot},
@@ -518,13 +519,13 @@ impl DocumentActor {
         else {
             panic!("Should have initialized text before performing random edit");
         };
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let options = ["d", "ü", "🥕", "💚", "\n"];
-        let random_text: String = repeat_with(|| options[rng.gen_range(0..options.len())])
+        let random_text: String = repeat_with(|| options[rng.random_range(0..options.len())])
             .take(4)
             .collect();
         let text_length = text.chars().count();
-        let random_position = rng.gen_range(0..=text_length);
+        let random_position = rng.random_range(0..=text_length);
 
         let mut delta = TextDelta::default();
         delta.retain(random_position);
@@ -534,7 +535,7 @@ impl DocumentActor {
         // Goal is to make "more critical" edits more likely. Like an "inverted" gauss curve :D
         let mut deletion_length = 0;
         if (text_length - random_position) > 0 {
-            deletion_length = rng.gen_range(0..(text_length - random_position));
+            deletion_length = rng.random_range(0..(text_length - random_position));
             deletion_length = deletion_length.min(3);
         }
         delta.delete(deletion_length);
@@ -953,12 +954,7 @@ pub struct Daemon {
 
 impl Daemon {
     // Launch the daemon. Optionally, connect to given peer.
-    pub async fn new(
-        app_config: AppConfig,
-        init: bool,
-        persist: bool,
-        prompt_bool: &(dyn Fn(&str) -> Result<bool> + Send + Sync),
-    ) -> Result<Self> {
+    pub async fn new(app_config: AppConfig, init: bool, persist: bool) -> Result<Self> {
         let is_host = app_config.is_host();
 
         let document_handle = DocumentActorHandle::new(&app_config, init, is_host, persist);
@@ -969,7 +965,7 @@ impl Daemon {
         let socket_path = base_dir
             .join(config::CONFIG_DIR)
             .join(config::DEFAULT_SOCKET_NAME);
-        editor::spawn_socket_listener(&socket_path, document_handle.clone(), prompt_bool)?;
+        editor::spawn_socket_listener(&socket_path, document_handle.clone())?;
 
         // Start file watcher.
         spawn_file_watcher(&app_config, document_handle.clone());
@@ -988,8 +984,13 @@ impl Daemon {
 
         if app_config.emit_secret_address {
             info!(
-                "\n\n\tOthers can connect by putting the following secret address in their .teamtype/config:\n\n\t{}\n",
-                address
+                "{}",
+                &docstr!(format!
+                    /// Others can connect by putting the following secret address in their .teamtype/config:
+                    ///
+                    ///     peer={address}
+                    ///
+                )
             );
         }
         if app_config.emit_join_code {

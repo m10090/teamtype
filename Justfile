@@ -4,6 +4,11 @@
 
 cargo := require('cargo')
 cargo-deny := require('cargo-deny')
+eslint := require('eslint')
+git := require('git')
+git-cliff := require('git-cliff')
+gh := require('gh')
+jq := require('jq')
 just := just_executable()
 luacheck := require('luacheck')
 nix := require('nix')
@@ -22,10 +27,14 @@ export TEAMTYPE_BINARY := justfile_directory() + "/target/debug/teamtype"
 set script-interpreter := ['bash', '-eu']
 set shell := ['bash', '-eu', '-c']
 
+set default-list
+set default-script
 set positional-arguments
 set unstable
 
 profile := "dev"
+default-remote := "origin"
+default-branch := "main"
 
 # With positional arguments enabled, we can pass all the arguments to the bash
 # shell in a way that will get expanded to the original 'word' breakdown. However,
@@ -50,11 +59,6 @@ check-cargo *ARGS:
 [group('check')]
 check-typos:
     {{ typos }}
-
-[default]
-[private]
-@list:
-    {{ just }} --list --unsorted
 
 [group('build')]
 build *ARGS:
@@ -91,7 +95,7 @@ format-typescript:
 
 [group('lint')]
 [parallel]
-lint: lint-format lint-license lint-lua lint-manifests lint-rust
+lint: lint-format lint-license lint-lua lint-manifests lint-rust lint-typescript
 
 [group('lint')]
 [parallel]
@@ -109,6 +113,11 @@ lint-format-rust:
 [group('lint')]
 lint-format-typescript:
     {{ prettier }} --check **.ts
+
+[group('lint')]
+[working-directory("vscode-plugin")]
+lint-typescript:
+    {{ eslint }} --max-warnings 0 src/
 
 [group('lint')]
 lint-license:
@@ -150,7 +159,6 @@ perfect: check lint test fuzz
 #
 # Run Neovim with the plug-in for testing (can be used from outside the project).
 [no-cd]
-[script]
 nvim *ARGS: build-test
     {{ nvim }} --clean \
         --cmd {{ quote("let &runtimepath=\"" + justfile_directory() + "/nvim-plugin,\" . &runtimepath") }} \
@@ -165,6 +173,41 @@ nvim *ARGS: build-test
 #
 # Build and run Teamtype for testing (can be used from outside the project).
 [no-cd]
-[script]
 teamtype *ARGS: build-test
     $TEAMTYPE_BINARY {{ maybe-pass(ARGS) }}
+
+# Get an early look at what the changelog draft would look like for a release.
+[group('release')]
+preview-changelog:
+    {{ git-cliff }} --unreleased --bump
+
+read-last-tag() := shell(git + ' describe --tags --abbrev=0 --match="v[0-9]*" HEAD')
+
+# Review what changes the current branch will bring to the next release's changelog draft.
+[group('release')]
+preview-branch-changelog:
+    {{ git }} diff --no-ext-diff --no-index -- \
+        <({{ git-cliff }} {{ read-last-tag() + ".." + default-remote + "/" + default-branch }}) \
+        <({{ git-cliff }} --unreleased)
+
+read-release-url(semver) := shell(gh + f" release view v{{semver}} --json url --jq .url")
+
+# Draft a Toot announcing a release.
+[group('release')]
+[script]
+prepare-release-toot semver:
+    cat <<- EOF
+    	━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    	Happy to announce the v{{ semver }} release of Teamtype! 🎉
+
+    	Teamtype enables real-time peer-to-peer collaborative editing of local files using your own text editor.
+
+    	Release: {{ read-release-url(semver) }}
+
+    	Project: https://github.com/teamtype/teamtype
+
+    	Highlights:
+    	- 
+    	- 
+    	━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    EOF

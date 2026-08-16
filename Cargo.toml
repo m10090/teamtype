@@ -11,7 +11,7 @@ resolver = "3"
 members = ["crates/teamtype", "crates/e2e-tests"]
 
 [workspace.package]
-version = "0.9.2-dev"
+version = "0.9.2"
 authors = [
     "Moritz Neeb <nt4u@kpvn.de>",
     "blinry <mail@blinry.org>",
@@ -21,11 +21,12 @@ homepage = "https://teamtype.github.io/teamtype/"
 repository = "https://github.com/teamtype/teamtype"
 license = "AGPL-3.0-or-later"
 edition = "2024"
-rust-version = "1.89.0"
+rust-version = "1.92.0"
 
 [workspace.dependencies]
 anyhow = "1"
 async-trait = "0.1"
+docstr = "0.4"
 pretty_assertions = "1"
 serde_json = "1"
 tempfile = "3"
@@ -68,6 +69,21 @@ too_many_lines = "allow"
 [workspace.lints.rust]
 unsafe_code = "forbid"
 unused_qualifications = "warn"
+
+[workspace.metadata.git-cliff.git]
+protect_breaking_commits = true
+filter_commits = true
+commit_parsers = [
+  { message = "(tooling)", skip = true },
+  { message = "^feat", group = "<!-- 0 -->New Features" },
+  { message = "^fix", group = "<!-- 1 -->Bug Fixes" },
+  { message = "^perf", group = "<!-- 2 -->Performance Improvements" },
+  { message = ".*", skip = true },
+]
+render_always = true
+postprocessors = [
+  { pattern = '.*', replace_command = 'typos --quiet --write-changes -' },
+]
 
 [workspace.metadata.typos.default]
 locale = "en-us"
